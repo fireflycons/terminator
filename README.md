@@ -30,13 +30,37 @@ Flags:
   -f, --log-format="logfmt"    Sets the log format. Valid formats are json and
                                logfmt
   -o, --log-output="stdout"    Sets the log output. Valid outputs are stdout and
-                               stderr```
+                               stderr
+
+```
 
 ## Installation
 
 A helm chart is provided [here](./charts)
 
-TODO: Add list of values
+The following values may be set:
+
+| Argument                   | Type   | Description                                                    | Default                |
+|----------------------------|--------|----------------------------------------------------------------|------------------------|
+| image.repository           | string | Repo to get image from                                         | fireflycons/terminator |
+| image.tag                  | string | Image tag                                                      | 0.0.2                  |
+| image.pullPolicy           | string | Pull policy for the image                                      | IfNotPresent           |
+| args                       | list   | List of command arguments to pass to the container             | []                     |
+| imageCredentials           | object | Object to declare container repo credentials for private repos | {}                     |
+| imageCredentials.registry  | string | Private registry to authenticate with                          | unset                  |
+| imageCredentials.username  | string | Registry username                                              | unset                  |
+| imageCredentials.password  | string | Registry password                                              | unset                  |
+| serviceAccount.create      | bool   | Whether to create a service account for the pod                | true                   |
+| serviceAccount.Annotations | object | Any additional annotations to add to the SA                    | {}                     |
+| podAnnotations             | object | Any additional annotations to add to the pod                   | {}                     |
+| podSecurityContext         | object | Security context to add to the pod                             | {}                     |
+| resources.limits.cpu       | string | CPU limit for pod                                              | 50m                    |
+| resources.limits.memory    | string | Memory limit for pod                                           | 96Mi                   |
+| resources.requests.cpu     | string | CPU request for pod                                            | 50m                    |
+| resources.requests.memory  | string | Memory request for pod                                         | 96Mi                   |
+| nodeSelector               | object | Specific node selector for pod                                 | {}                     |
+| tolerations                | list   | Tolerations for pod                                            | []                     |
+| affinity                   | object | Affinity for pod                                               | {}                     |
 
 ## Log output
 
