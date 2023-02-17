@@ -43,7 +43,7 @@ The following values may be set:
 | Argument                   | Type   | Description                                                    | Default                |
 |----------------------------|--------|----------------------------------------------------------------|------------------------|
 | image.repository           | string | Repo to get image from                                         | fireflycons/terminator |
-| image.tag                  | string | Image tag                                                      | 0.0.2                  |
+| image.tag                  | string | Image tag. If unset, taken from chart's `appVersion`           | Unset                  |
 | image.pullPolicy           | string | Pull policy for the image                                      | IfNotPresent           |
 | args                       | list   | List of command arguments to pass to the container             | []                     |
 | imageCredentials           | object | Object to declare container repo credentials for private repos | {}                     |

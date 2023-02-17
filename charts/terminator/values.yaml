@@ -4,7 +4,6 @@
 
 image:
   repository: fireflycons/terminator
-  tag: "0.0.2"
   pullPolicy: IfNotPresent
 
 args: []
