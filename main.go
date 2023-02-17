@@ -35,6 +35,7 @@ type CLI struct {
 	DryRun      bool          `short:"d" help:"If set, do not delete anything"`
 	GracePeriod time.Duration `short:"g" help:"Additional grace period added to that of the pod in Go duration syntax, e.g 2m, 1h etc." default:"${default_grace}"`
 	Interval    time.Duration `short:"i" help:"Interval between scans of the cluster in Go duration syntax, e.g 2m, 1h etc." default:"${default_interval}"`
+	Kubeconfig  string        `short:"k" help:"Specify a kubeconfig for authentication. If not set, then in cluster authentication is attempted"`
 	LogLevel    string        `short:"l" help:"Sets the loglevel. Valid levels are debug, info, warn, error" default:"${default_level}"`
 	LogFormat   string        `short:"f" help:"Sets the log format. Valid formats are json and logfmt" default:"${default_format}"`
 	LogOutput   string        `short:"o" help:"Sets the log output. Valid outputs are stdout and stderr" default:"${default_output}"`
@@ -223,19 +224,27 @@ func main() {
 		})
 
 	var err error
+	var config *rest.Config
 
 	logger := getLogger(cli.LogLevel, cli.LogOutput, cli.LogFormat)
-	_ = level.Info(logger).Log("message", "Checking for service account token")
-	os.Setenv("KUBERNETES_SERVICE_HOST", "kubernetes.default.svc")
-	os.Setenv("KUBERNETES_SERVICE_PORT", "443")
-	config, err := rest.InClusterConfig()
 
-	if err != nil {
-		_ = level.Info(logger).Log("message", "Checking for kubeconfig")
-		config, err = clientcmd.BuildConfigFromFlags("", "C:/Users/abm/.kube/config")
+	if len(cli.Kubeconfig) > 0 {
+		// Use kubeconfig passed on command line
+		_ = level.Info(logger).Log("message", "Loading kubeconfig")
+		config, err = clientcmd.BuildConfigFromFlags("", cli.Kubeconfig)
 
 		if err != nil {
-			_ = level.Error(logger).Log("message", fmt.Sprintf("Cannot authenticate either in cluster or via kubeconfig: %s", err.Error()))
+			_ = level.Error(logger).Log("message", fmt.Sprintf("Failed to authenticate via kubeconfig: %s", err.Error()))
+			os.Exit(1)
+		}
+	} else {
+		_ = level.Info(logger).Log("message", "Checking for service account token")
+		os.Setenv("KUBERNETES_SERVICE_HOST", "kubernetes.default.svc")
+		os.Setenv("KUBERNETES_SERVICE_PORT", "443")
+		config, err = rest.InClusterConfig()
+
+		if err != nil {
+			_ = level.Error(logger).Log("message", fmt.Sprintf("Failed to authenticate in-cluster: %s", err.Error()))
 			os.Exit(1)
 		}
 	}
