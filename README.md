@@ -25,13 +25,15 @@ Flags:
                                duration syntax, e.g 2m, 1h etc.
   -k, --kubeconfig=STRING      Specify a kubeconfig for authentication. If not
                                set, then in cluster authentication is attempted
+  -s, --startup-delay=15m      Time to wait between launching and first scan
+                               of the cluster in Go duration syntax, e.g 2m,
+                               1h etc.
   -l, --log-level="info"       Sets the loglevel. Valid levels are debug, info,
                                warn, error
   -f, --log-format="logfmt"    Sets the log format. Valid formats are json and
                                logfmt
   -o, --log-output="stdout"    Sets the log output. Valid outputs are stdout and
                                stderr
-
 ```
 
 ## Installation

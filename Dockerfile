@@ -5,7 +5,7 @@ COPY ./*.go .
 COPY ./go.mod .
 
 RUN go mod tidy
-RUN go build -o terminator .
+RUN go build -ldflags '-w -s' -o terminator .
 RUN chmod 755 terminator
 
 FROM scratch

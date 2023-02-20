@@ -32,13 +32,14 @@ import (
 
 // Struct that receives command line arguments.
 type CLI struct {
-	DryRun      bool          `short:"d" help:"If set, do not delete anything"`
-	GracePeriod time.Duration `short:"g" help:"Additional grace period added to that of the pod in Go duration syntax, e.g 2m, 1h etc." default:"${default_grace}"`
-	Interval    time.Duration `short:"i" help:"Interval between scans of the cluster in Go duration syntax, e.g 2m, 1h etc." default:"${default_interval}"`
-	Kubeconfig  string        `short:"k" help:"Specify a kubeconfig for authentication. If not set, then in cluster authentication is attempted"`
-	LogLevel    string        `short:"l" help:"Sets the loglevel. Valid levels are debug, info, warn, error" default:"${default_level}"`
-	LogFormat   string        `short:"f" help:"Sets the log format. Valid formats are json and logfmt" default:"${default_format}"`
-	LogOutput   string        `short:"o" help:"Sets the log output. Valid outputs are stdout and stderr" default:"${default_output}"`
+	DryRun       bool          `short:"d" help:"If set, do not delete anything"`
+	GracePeriod  time.Duration `short:"g" help:"Additional grace period added to that of the pod in Go duration syntax, e.g 2m, 1h etc." default:"${default_grace}"`
+	Interval     time.Duration `short:"i" help:"Interval between scans of the cluster in Go duration syntax, e.g 2m, 1h etc." default:"${default_interval}"`
+	Kubeconfig   string        `short:"k" help:"Specify a kubeconfig for authentication. If not set, then in cluster authentication is attempted"`
+	StartupDelay time.Duration `short:"s" help:"Time to wait between launching and first scan of the cluster in Go duration syntax, e.g 2m, 1h etc." default:"${default_startup}"`
+	LogLevel     string        `short:"l" help:"Sets the loglevel. Valid levels are debug, info, warn, error" default:"${default_level}"`
+	LogFormat    string        `short:"f" help:"Sets the log format. Valid formats are json and logfmt" default:"${default_format}"`
+	LogOutput    string        `short:"o" help:"Sets the log output. Valid outputs are stdout and stderr" default:"${default_output}"`
 }
 
 // goroutine that waits for any of the nomiated signals to be raised.
@@ -174,6 +175,19 @@ func processNamespaces(cli CLI, clientset *kubernetes.Clientset, done chan bool)
 	return true
 }
 
+func sleep(duration time.Duration, done chan bool) bool {
+
+	// Sleep, whilst checking for signals
+	select {
+	case <-done:
+		// Finished
+		return false
+	case <-time.After(duration):
+		// Continue opeation
+		return true
+	}
+}
+
 // Main control loop. Iterate all pods in all namespaces and check their state.
 func controlLoop(cli CLI, clientset *kubernetes.Clientset) {
 
@@ -191,6 +205,16 @@ func controlLoop(cli CLI, clientset *kubernetes.Clientset) {
 	// Start signal listener
 	go signalHandler(cli, sigs, done)
 
+	if cli.StartupDelay > 0 {
+		// For situiations where a cluster may have just come back online after a complete shutdown, allow
+		// it time to get its house in order prior to force terminating anything.
+		_ = level.Info(logger).Log("message", fmt.Sprintf("Sleeping for startup delay of %v", cli.StartupDelay))
+
+		if !sleep(cli.StartupDelay, done) {
+			return
+		}
+	}
+
 	// Main loop
 	for {
 		_ = level.Info(logger).Log("message", "Checking for terminating pods")
@@ -199,13 +223,8 @@ func controlLoop(cli CLI, clientset *kubernetes.Clientset) {
 		}
 
 		// Sleep, whilst checking for signals
-		select {
-		case <-done:
-			// finished
+		if !sleep(cli.Interval, done) {
 			return
-		case <-time.After(cli.Interval):
-			// Sart next iteration
-			continue
 		}
 	}
 }
@@ -221,6 +240,7 @@ func main() {
 			"default_level":    "info",
 			"default_format":   "logfmt",
 			"default_output":   "stdout",
+			"default_startup":  "15m",
 		})
 
 	var err error
