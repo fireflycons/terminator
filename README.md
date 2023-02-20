@@ -40,7 +40,9 @@ Flags:
 
 A helm chart is provided [here](./charts)
 
-The following values may be set:
+<details>
+<summary>The following values may be set. Expand to see:</summary>
+<br/>
 
 | Argument                   | Type   | Description                                                    | Default                |
 |----------------------------|--------|----------------------------------------------------------------|------------------------|
@@ -63,6 +65,8 @@ The following values may be set:
 | nodeSelector               | object | Specific node selector for pod                                 | {}                     |
 | tolerations                | list   | Tolerations for pod                                            | []                     |
 | affinity                   | object | Affinity for pod                                               | {}                     |
+
+</details>
 
 ## Log output
 
