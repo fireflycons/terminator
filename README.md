@@ -9,6 +9,8 @@ I've found that there are sometimes pods that get in this state following a full
 
 This tool works by scanning all pods in the cluster (static pods excluded) every so often for pods where the `deletionTimestamp` is longer ago than the current time minus the grace period. These pods are then force-terminated.
 
+Note that you should attempt to find out why you have pods in these states, and use this tool as a last resort, i.e. there's no good reason why they shouldn't terminate.
+
 ## Command line arguments
 
 All the following are optional.
@@ -17,23 +19,26 @@ All the following are optional.
 Usage: terminator
 
 Flags:
-  -h, --help                   Show context-sensitive help.
-  -d, --dry-run                If set, do not delete anything
-  -g, --grace-period=1h        Additional grace period added to that of the pod
-                               in Go duration syntax, e.g 2m, 1h etc.
-  -i, --interval=5m            Interval between scans of the cluster in Go
-                               duration syntax, e.g 2m, 1h etc.
-  -k, --kubeconfig=STRING      Specify a kubeconfig for authentication. If not
-                               set, then in cluster authentication is attempted
-  -s, --startup-delay=15m      Time to wait between launching and first scan
-                               of the cluster in Go duration syntax, e.g 2m,
-                               1h etc.
-  -l, --log-level="info"       Sets the loglevel. Valid levels are debug, info,
-                               warn, error
-  -f, --log-format="logfmt"    Sets the log format. Valid formats are json and
-                               logfmt
-  -o, --log-output="stdout"    Sets the log output. Valid outputs are stdout and
-                               stderr
+  -h, --help                    Show context-sensitive help.
+  -d, --dry-run                 If set, do not delete anything.
+  -g, --grace-period=1h         Additional grace period added to that of the pod
+                                in Go duration syntax, e.g 2m, 1h etc.
+  -i, --interval=5m             Interval between scans of the cluster in Go
+                                duration syntax, e.g 2m, 1h etc.
+  -k, --kubeconfig=STRING       Specify a kubeconfig for authentication.
+                                If not set, then in cluster authentication is
+                                attempted.
+  -s, --startup-delay=15m       Time to wait between launching and first scan
+                                of the cluster in Go duration syntax, e.g 2m,
+                                1h etc.
+  -r, --no-remove-finalizers    If set, do not remove any finalizers before
+                                attempting delete.
+  -l, --log-level="info"        Sets the loglevel. Valid levels are debug, info,
+                                warn, error.
+  -f, --log-format="logfmt"     Sets the log format. Valid formats are json and
+                                logfmt.
+  -o, --log-output="stdout"     Sets the log output. Valid outputs are stdout
+                                and stderr.
 ```
 
 ## Installation
@@ -80,3 +85,38 @@ Logs are output as several key-value pairs to make ingestion into log analysers 
 | `message` | The message text.                                      |
 
 Most messages are emitted at `info` level. When a pod is terminated, messages about the termination are emitted at `warn` level.
+
+## Simple Test
+
+1. Install terminator in your cluster. Set `--interval`, `--startup-delay` and `--grace-period` to really small values so you don't have to wait too long.
+
+1. Create a pod with a dummy finalizer
+
+    ```yaml
+    apiVersion: v1
+    kind: Pod
+    metadata:
+      finalizers:
+      - kubernetes
+      labels:
+        run: testpod
+      name: testpod
+      namespace: default
+    spec:
+      containers:
+      - image: nginx:alpine
+        name: testpod
+    ```
+
+1. After it's come up, delete it
+
+    ```
+    kubectl delete pod -n default testpod
+    ```
+
+    It should be stuck terminating.
+
+1. Wait for terminator to do its next cluster scan. The pod should delete. Examine the terminator pod logs.
+
+After testing, ensure to set the intervals back to sensible or default values!
+

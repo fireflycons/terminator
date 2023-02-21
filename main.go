@@ -24,6 +24,7 @@ import (
 	"github.com/alecthomas/kong"
 	"github.com/go-kit/log/level"
 	v1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -32,14 +33,15 @@ import (
 
 // Struct that receives command line arguments.
 type CLI struct {
-	DryRun       bool          `short:"d" help:"If set, do not delete anything"`
-	GracePeriod  time.Duration `short:"g" help:"Additional grace period added to that of the pod in Go duration syntax, e.g 2m, 1h etc." default:"${default_grace}"`
-	Interval     time.Duration `short:"i" help:"Interval between scans of the cluster in Go duration syntax, e.g 2m, 1h etc." default:"${default_interval}"`
-	Kubeconfig   string        `short:"k" help:"Specify a kubeconfig for authentication. If not set, then in cluster authentication is attempted"`
-	StartupDelay time.Duration `short:"s" help:"Time to wait between launching and first scan of the cluster in Go duration syntax, e.g 2m, 1h etc." default:"${default_startup}"`
-	LogLevel     string        `short:"l" help:"Sets the loglevel. Valid levels are debug, info, warn, error" default:"${default_level}"`
-	LogFormat    string        `short:"f" help:"Sets the log format. Valid formats are json and logfmt" default:"${default_format}"`
-	LogOutput    string        `short:"o" help:"Sets the log output. Valid outputs are stdout and stderr" default:"${default_output}"`
+	DryRun             bool          `short:"d" help:"If set, do not delete anything."`
+	GracePeriod        time.Duration `short:"g" help:"Additional grace period added to that of the pod in Go duration syntax, e.g 2m, 1h etc." default:"${default_grace}"`
+	Interval           time.Duration `short:"i" help:"Interval between scans of the cluster in Go duration syntax, e.g 2m, 1h etc." default:"${default_interval}"`
+	Kubeconfig         string        `short:"k" help:"Specify a kubeconfig for authentication. If not set, then in cluster authentication is attempted."`
+	StartupDelay       time.Duration `short:"s" help:"Time to wait between launching and first scan of the cluster in Go duration syntax, e.g 2m, 1h etc." default:"${default_startup}"`
+	NoRemoveFinalizers bool          `short:"r" help:"If set, do not remove any finalizers before attempting delete."`
+	LogLevel           string        `short:"l" help:"Sets the loglevel. Valid levels are debug, info, warn, error." default:"${default_level}"`
+	LogFormat          string        `short:"f" help:"Sets the log format. Valid formats are json and logfmt." default:"${default_format}"`
+	LogOutput          string        `short:"o" help:"Sets the log output. Valid outputs are stdout and stderr." default:"${default_output}"`
 }
 
 // goroutine that waits for any of the nomiated signals to be raised.
@@ -80,22 +82,75 @@ func isStaticPod(pod *v1.Pod) bool {
 	return false
 }
 
-// Check whether a pod is stuck in Terminating. Force delete if it is.
-// Returns false if we should shut down.
-func processPod(cli CLI, clientset *kubernetes.Clientset, namespace string, pod *v1.Pod, done chan bool) bool {
+func formatPodName(pod *v1.Pod) string {
+	return fmt.Sprintf("Pod '%s' in namespace '%s'", pod.Name, pod.Namespace)
+}
+
+// Remove any finalizers on pod.
+// Return false if they couldn't be removed.
+func removeFinalizers(cli CLI, clientset *kubernetes.Clientset, pod *v1.Pod) bool {
+
+	if len(pod.Finalizers) == 0 {
+		return true
+	}
+
+	finalizers := make([]string, len(pod.Finalizers))
+	copy(finalizers, pod.Finalizers)
 
 	logger := getLogger(cli.LogLevel, cli.LogOutput, cli.LogFormat)
-	podName := pod.ObjectMeta.Name
 
-	if signalRaised(done) {
+	if cli.NoRemoveFinalizers {
+		_ = level.Warn(logger).Log("message", fmt.Sprintf("%s. Cannot delete as pod has finalizers", formatPodName(pod)))
 		return false
 	}
 
-	pod, err := clientset.CoreV1().Pods(namespace).Get(context.TODO(), podName, metav1.GetOptions{})
+	pod.Finalizers = []string{}
+	_, err := clientset.CoreV1().Pods(pod.Namespace).Update(context.TODO(), pod, metav1.UpdateOptions{})
 
 	if err != nil {
-		_ = level.Error(logger).Log("message", fmt.Sprintf("Cannot get pod %s in namespace %s: %s", podName, namespace, err.Error()))
-		return true
+		_ = level.Warn(logger).Log("message", fmt.Sprintf("%s: Cannot remove finalizers: %s", formatPodName(pod), err.Error()))
+		return false
+	}
+
+	_ = level.Warn(logger).Log("message", fmt.Sprintf("%s: Removed finalizers: %v ", formatPodName(pod), finalizers))
+
+	return true
+}
+
+// Delete the pod
+func deletePod(cli CLI, clientset *kubernetes.Clientset, pod *v1.Pod) {
+
+	logger := getLogger(cli.LogLevel, cli.LogOutput, cli.LogFormat)
+
+	gracePeriodSeconds := int64(0)
+	err := clientset.CoreV1().Pods(pod.Namespace).Delete(context.TODO(), pod.Name, metav1.DeleteOptions{
+		GracePeriodSeconds: &gracePeriodSeconds,
+	})
+
+	if err == nil {
+		_ = level.Warn(logger).Log("message", fmt.Sprintf("%s has been force deleted", formatPodName(pod)))
+		return
+	}
+
+	if se, ok := err.(*errors.StatusError); ok && se.ErrStatus.Code == 404 {
+		// Removing finalizers already deleted the pod.
+		_ = level.Warn(logger).Log("message", fmt.Sprintf("%s has been force deleted", formatPodName(pod)))
+		return
+	}
+
+	_ = level.Error(logger).Log("message", fmt.Sprintf("%s: Cannot force delete: %s", formatPodName(pod), err.Error()))
+}
+
+// Check whether a pod is stuck in Terminating. Force delete if it is.
+func processPod(cli CLI, clientset *kubernetes.Clientset, namespace string, listedPod *v1.Pod) {
+
+	logger := getLogger(cli.LogLevel, cli.LogOutput, cli.LogFormat)
+
+	pod, err := clientset.CoreV1().Pods(namespace).Get(context.TODO(), listedPod.Name, metav1.GetOptions{})
+
+	if err != nil {
+		_ = level.Error(logger).Log("message", fmt.Sprintf("%s: Cannot get pod details: %s", formatPodName(listedPod), err.Error()))
+		return
 	}
 
 	// Check the state of the pod
@@ -104,13 +159,15 @@ func processPod(cli CLI, clientset *kubernetes.Clientset, namespace string, pod 
 
 	if deletionTimestamp == nil {
 		// Not been terminated
-		return true
+		return
 	}
+
+	podName := formatPodName(pod)
 
 	// If pod is owned by a node, then it's static and should not be deleted this way.
 	if isStaticPod(pod) {
-		_ = level.Warn(logger).Log("message", fmt.Sprintf("Cannot terminate static pod %s in namespace %s", podName, namespace))
-		return true
+		_ = level.Warn(logger).Log("message", fmt.Sprintf("%s: Cannot terminate static pod", podName))
+		return
 	}
 
 	// Total grace period allowed for termination. Pod's grace period + any set by command line
@@ -119,28 +176,24 @@ func processPod(cli CLI, clientset *kubernetes.Clientset, namespace string, pod 
 	// Current time minus the grace period
 	deleteBy := metav1.Time{Time: now.Add(-syntheticGracePeriod)}
 
-	if deletionTimestamp.Before(&deleteBy) {
-		//
-		terminatingDuration := now.Sub(deletionTimestamp.Time).Round(time.Second)
-		_ = level.Warn(logger).Log("message", fmt.Sprintf("Pod %s in namespace %s has been terminating for %v, which exceeds grace period of %v. Force deleting...", podName, namespace, terminatingDuration, syntheticGracePeriod))
-
-		if cli.DryRun {
-			_ = level.Warn(logger).Log("message", fmt.Sprintf("Pod %s in namespace %s would be force deleted", podName, namespace))
-		} else {
-			gracePeriodSeconds := int64(0)
-			err = clientset.CoreV1().Pods(namespace).Delete(context.TODO(), podName, metav1.DeleteOptions{
-				GracePeriodSeconds: &gracePeriodSeconds,
-			})
-
-			if err != nil {
-				_ = level.Error(logger).Log("message", fmt.Sprintf("Cannot force delete pod %s in namespace %s: %s", podName, namespace, err.Error()))
-			} else {
-				_ = level.Warn(logger).Log("message", fmt.Sprintf("Pod %s in namespace %s has been force deleted", podName, namespace))
-			}
-		}
+	if !deletionTimestamp.Before(&deleteBy) {
+		return
 	}
 
-	return true
+	// Copy finalizers
+	terminatingDuration := now.Sub(deletionTimestamp.Time).Round(time.Second)
+	_ = level.Warn(logger).Log("message", fmt.Sprintf("%s has been terminating for %v, which exceeds grace period of %v. Force deleting...", podName, terminatingDuration, syntheticGracePeriod))
+
+	if cli.DryRun {
+		_ = level.Warn(logger).Log("message", fmt.Sprintf("%s with finalizers %v would be force deleted", podName, pod.Finalizers))
+		return
+	}
+
+	if !removeFinalizers(cli, clientset, pod) {
+		return
+	}
+
+	deletePod(cli, clientset, pod)
 }
 
 // Iterate through all namespaces, checking pod states.
@@ -151,24 +204,27 @@ func processNamespaces(cli CLI, clientset *kubernetes.Clientset, done chan bool)
 	namespaces, err := clientset.CoreV1().Namespaces().List(context.TODO(), metav1.ListOptions{})
 
 	if err != nil {
-		_ = level.Error(logger).Log("message", fmt.Sprintf("ERROR: Cannot list namespaces: %s", err.Error()))
+		_ = level.Error(logger).Log("message", fmt.Sprintf("ERROR: Cannot list namespaces: '%s'", err.Error()))
 		return true
 	}
 
 	for _, ns := range namespaces.Items {
 
-		namespace := ns.ObjectMeta.Name
+		namespace := ns.Name
 		pods, err := clientset.CoreV1().Pods(namespace).List(context.TODO(), metav1.ListOptions{})
 
 		if err != nil {
-			_ = level.Error(logger).Log("message", fmt.Sprintf("ERROR: Cannot list pods in namespace %s: %s", namespace, err))
+			_ = level.Error(logger).Log("message", fmt.Sprintf("ERROR: Cannot list pods in namespace '%s': %s", namespace, err))
 			continue
 		}
 
 		for _, pod := range pods.Items {
-			if !processPod(cli, clientset, namespace, &pod, done) {
+
+			if signalRaised(done) {
 				return false
 			}
+
+			processPod(cli, clientset, namespace, &pod)
 		}
 	}
 

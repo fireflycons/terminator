@@ -6,7 +6,8 @@ image:
   repository: fireflycons/terminator
   pullPolicy: IfNotPresent
 
-args: []
+args:
+- --remove-finalizers
 
 imageCredentials: {}
 
@@ -24,14 +25,15 @@ podAnnotations: {}
 podSecurityContext: {}
   # fsGroup: 2000
 
-
+# Mem limit may need to be increased if there are
+# namespaces with a very large number of pods.
 resources:
   limits:
     cpu: 50m
-    memory: 96Mi
+    memory: 64Mi
   requests:
     cpu: 50m
-    memory: 96Mi
+    memory: 64Mi
 
 
 nodeSelector: {}
