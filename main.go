@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -29,6 +30,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/utils/strings/slices"
 )
 
 // Struct that receives command line arguments.
@@ -37,8 +39,10 @@ type CLI struct {
 	GracePeriod        time.Duration `short:"g" help:"Additional grace period added to that of the pod in Go duration syntax, e.g 2m, 1h etc." default:"${default_grace}"`
 	Interval           time.Duration `short:"i" help:"Interval between scans of the cluster in Go duration syntax, e.g 2m, 1h etc." default:"${default_interval}"`
 	Kubeconfig         string        `short:"k" help:"Specify a kubeconfig for authentication. If not set, then in cluster authentication is attempted."`
-	StartupDelay       time.Duration `short:"s" help:"Time to wait between launching and first scan of the cluster in Go duration syntax, e.g 2m, 1h etc." default:"${default_startup}"`
+	Namespaces         []string      `short:"n" help:"If set, list of namespaces to limit scans to. If not set, all namespaces are scanned."`
+	Pods               []string      `short:"p" help:"If set, list of pod name prefixes. Pods whose names begin with these prefixes will only be considered. If not set, all pods will be considered."`
 	NoRemoveFinalizers bool          `short:"r" help:"If set, do not remove any finalizers before attempting delete."`
+	StartupDelay       time.Duration `short:"s" help:"Time to wait between launching and first scan of the cluster in Go duration syntax, e.g 2m, 1h etc." default:"${default_startup}"`
 	LogLevel           string        `short:"l" help:"Sets the loglevel. Valid levels are debug, info, warn, error." default:"${default_level}"`
 	LogFormat          string        `short:"f" help:"Sets the log format. Valid formats are json and logfmt." default:"${default_format}"`
 	LogOutput          string        `short:"o" help:"Sets the log output. Valid outputs are stdout and stderr." default:"${default_output}"`
@@ -210,6 +214,11 @@ func processNamespaces(cli CLI, clientset *kubernetes.Clientset, done chan bool)
 
 	for _, ns := range namespaces.Items {
 
+		if len(cli.Namespaces) > 0 && !slices.Contains(cli.Namespaces, ns.Name) {
+			// Skip ns if user supplied a list of ns and this one not in that list.
+			continue
+		}
+
 		namespace := ns.Name
 		pods, err := clientset.CoreV1().Pods(namespace).List(context.TODO(), metav1.ListOptions{})
 
@@ -222,6 +231,21 @@ func processNamespaces(cli CLI, clientset *kubernetes.Clientset, done chan bool)
 
 			if signalRaised(done) {
 				return false
+			}
+
+			if len(cli.Pods) > 0 {
+				// User specified pod prefixes?
+				process := false
+				for _, prefix := range cli.Pods {
+					if strings.HasPrefix(pod.Name, prefix) {
+						process = true
+						break
+					}
+				}
+
+				if !process {
+					continue
+				}
 			}
 
 			processPod(cli, clientset, namespace, &pod)

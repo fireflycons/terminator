@@ -28,11 +28,18 @@ Flags:
   -k, --kubeconfig=STRING       Specify a kubeconfig for authentication.
                                 If not set, then in cluster authentication is
                                 attempted.
+  -n, --namespaces=NAMESPACES,...
+                                If set, list of namespaces to limit scans to.
+                                If not set, all namespaces are scanned.
+  -p, --pods=PODS,...           If set, list of pod name prefixes. Pods whose
+                                names begin with these prefixes will only
+                                be considered. If not set, all pods will be
+                                considered.
+  -r, --no-remove-finalizers    If set, do not remove any finalizers before
+                                attempting delete.
   -s, --startup-delay=15m       Time to wait between launching and first scan
                                 of the cluster in Go duration syntax, e.g 2m,
                                 1h etc.
-  -r, --no-remove-finalizers    If set, do not remove any finalizers before
-                                attempting delete.
   -l, --log-level="info"        Sets the loglevel. Valid levels are debug, info,
                                 warn, error.
   -f, --log-format="logfmt"     Sets the log format. Valid formats are json and
