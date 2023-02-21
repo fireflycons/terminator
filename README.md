@@ -84,6 +84,8 @@ A helm chart is provided [here](./charts)
 
 Logs are output as several key-value pairs to make ingestion into log analysers like ElasticSearch easier. The logs may be emitted as plain text (default) or JSON by setting `--log-format`
 
+The following log fields are always emitted
+
 | Key       | Value                                                  |
 |-----------|--------------------------------------------------------|
 | `level`   | Logging level (severity) of message.                   |
@@ -91,7 +93,16 @@ Logs are output as several key-value pairs to make ingestion into log analysers 
 | `caller`  | Location in the code where the log message was raised. |
 | `message` | The message text.                                      |
 
-Most messages are emitted at `info` level. When a pod is terminated, messages about the termination are emitted at `warn` level.
+Some or all of the following fields may be included depending on context.
+
+| Key          | Value                                              |
+|--------------|----------------------------------------------------|
+| `namespace`  | Namespace in which the operation occurs.           |
+| `pod`        | Pod which is being operated on.                    |
+| `finalizers` | Lists any finalizers on pod where relevant.        |
+| `exception`  | Any specific exception detail if an error occurs.  |
+
+Most messages are emitted at `info` level. When a pod is terminated, messages about the termination are emitted at `warn` level and exceptions at `error` level.
 
 ## Simple Test
 

@@ -4,6 +4,7 @@ go 1.19
 
 require (
 	github.com/alecthomas/kong v0.7.1
+	github.com/go-kit/kit v0.12.0
 	github.com/go-kit/log v0.2.1
 	k8s.io/api v0.26.1
 	k8s.io/apimachinery v0.26.1

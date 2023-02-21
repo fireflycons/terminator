@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/alecthomas/kong"
+	"github.com/go-kit/kit/log"
 	"github.com/go-kit/log/level"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -31,6 +32,15 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/utils/strings/slices"
+)
+
+// Log context keys
+const (
+	KEY_MESSAGE    = "message"
+	KEY_NAMESPACE  = "namespace"
+	KEY_POD        = "pod"
+	KEY_FINALIZERS = "finalizers"
+	KEY_EXCEPTION  = "exception"
 )
 
 // Struct that receives command line arguments.
@@ -55,7 +65,7 @@ func signalHandler(cli CLI, sigs chan os.Signal, done chan bool) {
 	logger := getLogger(cli.LogLevel, cli.LogOutput, cli.LogFormat)
 	sig := <-sigs
 
-	_ = level.Info(logger).Log("message", fmt.Sprintf("INFO: Signal received: %v", sig))
+	_ = level.Info(logger).Log(KEY_MESSAGE, fmt.Sprintf("INFO: Signal received: %v", sig))
 	done <- true
 }
 
@@ -101,10 +111,10 @@ func removeFinalizers(cli CLI, clientset *kubernetes.Clientset, pod *v1.Pod) boo
 	finalizers := make([]string, len(pod.Finalizers))
 	copy(finalizers, pod.Finalizers)
 
-	logger := getLogger(cli.LogLevel, cli.LogOutput, cli.LogFormat)
+	logger := log.With(getLogger(cli.LogLevel, cli.LogOutput, cli.LogFormat), KEY_POD, pod.Name, KEY_NAMESPACE, pod.Namespace)
 
 	if cli.NoRemoveFinalizers {
-		_ = level.Warn(logger).Log("message", fmt.Sprintf("%s. Cannot delete as pod has finalizers", formatPodName(pod)))
+		_ = level.Warn(logger).Log(KEY_MESSAGE, "Cannot delete as pod has finalizers", KEY_FINALIZERS, finalizers)
 		return false
 	}
 
@@ -112,11 +122,11 @@ func removeFinalizers(cli CLI, clientset *kubernetes.Clientset, pod *v1.Pod) boo
 	_, err := clientset.CoreV1().Pods(pod.Namespace).Update(context.TODO(), pod, metav1.UpdateOptions{})
 
 	if err != nil {
-		_ = level.Warn(logger).Log("message", fmt.Sprintf("%s: Cannot remove finalizers: %s", formatPodName(pod), err.Error()))
+		_ = level.Warn(logger).Log(KEY_MESSAGE, "Cannot remove finalizers", KEY_EXCEPTION, err.Error(), KEY_FINALIZERS, finalizers)
 		return false
 	}
 
-	_ = level.Warn(logger).Log("message", fmt.Sprintf("%s: Removed finalizers: %v ", formatPodName(pod), finalizers))
+	_ = level.Warn(logger).Log(KEY_MESSAGE, "Removed finalizers", KEY_FINALIZERS, finalizers)
 
 	return true
 }
@@ -124,7 +134,7 @@ func removeFinalizers(cli CLI, clientset *kubernetes.Clientset, pod *v1.Pod) boo
 // Delete the pod
 func deletePod(cli CLI, clientset *kubernetes.Clientset, pod *v1.Pod) {
 
-	logger := getLogger(cli.LogLevel, cli.LogOutput, cli.LogFormat)
+	logger := log.With(getLogger(cli.LogLevel, cli.LogOutput, cli.LogFormat), KEY_POD, pod.Name, KEY_NAMESPACE, pod.Namespace)
 
 	gracePeriodSeconds := int64(0)
 	err := clientset.CoreV1().Pods(pod.Namespace).Delete(context.TODO(), pod.Name, metav1.DeleteOptions{
@@ -132,28 +142,28 @@ func deletePod(cli CLI, clientset *kubernetes.Clientset, pod *v1.Pod) {
 	})
 
 	if err == nil {
-		_ = level.Warn(logger).Log("message", fmt.Sprintf("%s has been force deleted", formatPodName(pod)))
+		_ = level.Warn(logger).Log(KEY_MESSAGE, "Pod has been force deleted")
 		return
 	}
 
 	if se, ok := err.(*errors.StatusError); ok && se.ErrStatus.Code == 404 {
 		// Removing finalizers already deleted the pod.
-		_ = level.Warn(logger).Log("message", fmt.Sprintf("%s has been force deleted", formatPodName(pod)))
+		_ = level.Warn(logger).Log(KEY_MESSAGE, "Pod has been force deleted")
 		return
 	}
 
-	_ = level.Error(logger).Log("message", fmt.Sprintf("%s: Cannot force delete: %s", formatPodName(pod), err.Error()))
+	_ = level.Error(logger).Log(KEY_MESSAGE, "Cannot force delete pod", KEY_EXCEPTION, err.Error())
 }
 
 // Check whether a pod is stuck in Terminating. Force delete if it is.
 func processPod(cli CLI, clientset *kubernetes.Clientset, namespace string, listedPod *v1.Pod) {
 
-	logger := getLogger(cli.LogLevel, cli.LogOutput, cli.LogFormat)
+	logger := log.With(getLogger(cli.LogLevel, cli.LogOutput, cli.LogFormat), KEY_POD, listedPod.Name, KEY_NAMESPACE, listedPod.Namespace)
 
 	pod, err := clientset.CoreV1().Pods(namespace).Get(context.TODO(), listedPod.Name, metav1.GetOptions{})
 
 	if err != nil {
-		_ = level.Error(logger).Log("message", fmt.Sprintf("%s: Cannot get pod details: %s", formatPodName(listedPod), err.Error()))
+		_ = level.Error(logger).Log(KEY_MESSAGE, "Cannot get pod details", KEY_EXCEPTION, err.Error())
 		return
 	}
 
@@ -166,11 +176,9 @@ func processPod(cli CLI, clientset *kubernetes.Clientset, namespace string, list
 		return
 	}
 
-	podName := formatPodName(pod)
-
 	// If pod is owned by a node, then it's static and should not be deleted this way.
 	if isStaticPod(pod) {
-		_ = level.Warn(logger).Log("message", fmt.Sprintf("%s: Cannot terminate static pod", podName))
+		_ = level.Warn(logger).Log(KEY_MESSAGE, "Cannot terminate static pods")
 		return
 	}
 
@@ -186,10 +194,10 @@ func processPod(cli CLI, clientset *kubernetes.Clientset, namespace string, list
 
 	// Copy finalizers
 	terminatingDuration := now.Sub(deletionTimestamp.Time).Round(time.Second)
-	_ = level.Warn(logger).Log("message", fmt.Sprintf("%s has been terminating for %v, which exceeds grace period of %v. Force deleting...", podName, terminatingDuration, syntheticGracePeriod))
+	_ = level.Warn(logger).Log(KEY_MESSAGE, fmt.Sprintf("Pod has been terminating for %v, which exceeds grace period of %v. Force deleting...", terminatingDuration, syntheticGracePeriod))
 
 	if cli.DryRun {
-		_ = level.Warn(logger).Log("message", fmt.Sprintf("%s with finalizers %v would be force deleted", podName, pod.Finalizers))
+		_ = level.Warn(logger).Log(KEY_MESSAGE, "Pod would be force deleted", KEY_FINALIZERS, pod.Finalizers)
 		return
 	}
 
@@ -208,7 +216,7 @@ func processNamespaces(cli CLI, clientset *kubernetes.Clientset, done chan bool)
 	namespaces, err := clientset.CoreV1().Namespaces().List(context.TODO(), metav1.ListOptions{})
 
 	if err != nil {
-		_ = level.Error(logger).Log("message", fmt.Sprintf("ERROR: Cannot list namespaces: '%s'", err.Error()))
+		_ = level.Error(logger).Log(KEY_MESSAGE, "Cannot list namespaces", KEY_EXCEPTION, err.Error())
 		return true
 	}
 
@@ -223,7 +231,7 @@ func processNamespaces(cli CLI, clientset *kubernetes.Clientset, done chan bool)
 		pods, err := clientset.CoreV1().Pods(namespace).List(context.TODO(), metav1.ListOptions{})
 
 		if err != nil {
-			_ = level.Error(logger).Log("message", fmt.Sprintf("ERROR: Cannot list pods in namespace '%s': %s", namespace, err))
+			_ = level.Error(logger).Log(KEY_MESSAGE, "Cannot list pods", KEY_NAMESPACE, namespace, KEY_EXCEPTION, err.Error())
 			continue
 		}
 
@@ -288,7 +296,7 @@ func controlLoop(cli CLI, clientset *kubernetes.Clientset) {
 	if cli.StartupDelay > 0 {
 		// For situiations where a cluster may have just come back online after a complete shutdown, allow
 		// it time to get its house in order prior to force terminating anything.
-		_ = level.Info(logger).Log("message", fmt.Sprintf("Sleeping for startup delay of %v", cli.StartupDelay))
+		_ = level.Info(logger).Log(KEY_MESSAGE, fmt.Sprintf("Sleeping for startup delay of %v", cli.StartupDelay))
 
 		if !sleep(cli.StartupDelay, done) {
 			return
@@ -297,7 +305,7 @@ func controlLoop(cli CLI, clientset *kubernetes.Clientset) {
 
 	// Main loop
 	for {
-		_ = level.Info(logger).Log("message", "Checking for terminating pods")
+		_ = level.Info(logger).Log(KEY_MESSAGE, "Checking for terminating pods")
 		if !processNamespaces(cli, clientset, done) {
 			return
 		}
@@ -330,21 +338,21 @@ func main() {
 
 	if len(cli.Kubeconfig) > 0 {
 		// Use kubeconfig passed on command line
-		_ = level.Info(logger).Log("message", "Loading kubeconfig")
+		_ = level.Info(logger).Log(KEY_MESSAGE, "Loading kubeconfig")
 		config, err = clientcmd.BuildConfigFromFlags("", cli.Kubeconfig)
 
 		if err != nil {
-			_ = level.Error(logger).Log("message", fmt.Sprintf("Failed to authenticate via kubeconfig: %s", err.Error()))
+			_ = level.Error(logger).Log(KEY_MESSAGE, "FATAL: Failed to authenticate via kubeconfig", "kubeconfig", cli.Kubeconfig, KEY_EXCEPTION, err.Error())
 			os.Exit(1)
 		}
 	} else {
-		_ = level.Info(logger).Log("message", "Checking for service account token")
+		_ = level.Info(logger).Log(KEY_MESSAGE, "Checking for service account token")
 		os.Setenv("KUBERNETES_SERVICE_HOST", "kubernetes.default.svc")
 		os.Setenv("KUBERNETES_SERVICE_PORT", "443")
 		config, err = rest.InClusterConfig()
 
 		if err != nil {
-			_ = level.Error(logger).Log("message", fmt.Sprintf("Failed to authenticate in-cluster: %s", err.Error()))
+			_ = level.Error(logger).Log(KEY_MESSAGE, "FATAL: Failed to authenticate in-cluster", KEY_EXCEPTION, err.Error())
 			os.Exit(1)
 		}
 	}
@@ -353,10 +361,10 @@ func main() {
 	clientset, err := kubernetes.NewForConfig(config)
 
 	if err != nil {
-		_ = level.Error(logger).Log("message", fmt.Sprintf("ERROR cannot create clientset: %s", err.Error()))
+		_ = level.Error(logger).Log(KEY_MESSAGE, "FATAL: Cannot create clientset", KEY_EXCEPTION, err.Error())
 		os.Exit(1)
 	}
 
 	controlLoop(cli, clientset)
-	_ = level.Info(logger).Log("message", "Shutting down")
+	_ = level.Info(logger).Log(KEY_MESSAGE, "Shutting down")
 }
