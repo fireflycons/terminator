@@ -71,9 +71,9 @@ A helm chart is provided [here](./charts)
 | podAnnotations             | object | Any additional annotations to add to the pod                   | {}                     |
 | podSecurityContext         | object | Security context to add to the pod                             | {}                     |
 | resources.limits.cpu       | string | CPU limit for pod                                              | 50m                    |
-| resources.limits.memory    | string | Memory limit for pod                                           | 96Mi                   |
+| resources.limits.memory    | string | Memory limit for pod                                           | 64Mi                   |
 | resources.requests.cpu     | string | CPU request for pod                                            | 50m                    |
-| resources.requests.memory  | string | Memory request for pod                                         | 96Mi                   |
+| resources.requests.memory  | string | Memory request for pod                                         | 64Mi                   |
 | nodeSelector               | object | Specific node selector for pod                                 | {}                     |
 | tolerations                | list   | Tolerations for pod                                            | []                     |
 | affinity                   | object | Affinity for pod                                               | {}                     |
@@ -83,6 +83,11 @@ A helm chart is provided [here](./charts)
 ## Log output
 
 Logs are output as several key-value pairs to make ingestion into log analysers like ElasticSearch easier. The logs may be emitted as plain text (default) or JSON by setting `--log-format`
+
+Most messages are emitted at `info` level. When a pod is terminated, messages about the termination are emitted at `warn` level and exceptions at `error` level.
+
+<details>
+<summary>Log Fields</summary>
 
 The following log fields are always emitted
 
@@ -102,7 +107,7 @@ Some or all of the following fields may be included depending on context.
 | `finalizers` | Lists any finalizers on pod where relevant.        |
 | `exception`  | Any specific exception detail if an error occurs.  |
 
-Most messages are emitted at `info` level. When a pod is terminated, messages about the termination are emitted at `warn` level and exceptions at `error` level.
+</details>
 
 ## Simple Test
 
